@@ -56,7 +56,6 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           GOARM: ${{ matrix.goarm }}
         run: |
-          cd go
           go build -ldflags="-s -w" -o ${{ matrix.output }} cmd/srun/main.go
 
       - name: Upload artifact
