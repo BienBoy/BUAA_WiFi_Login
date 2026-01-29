@@ -55,6 +55,7 @@ func Load(configPath string) (*Config, error) {
 
 	// 环境变量前缀
 	v.SetEnvPrefix("SRUN")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
 	v.AutomaticEnv()
 
 	// 设置默认值
@@ -78,6 +79,10 @@ func Load(configPath string) (*Config, error) {
 
 // setDefaults 设置默认值
 func setDefaults(v *viper.Viper) {
+	v.SetDefault("base_url","")
+	v.SetDefault("username","")
+	v.SetDefault("password","")
+
 	// 运行参数
 	v.SetDefault("os_name", "Linux")
 	v.SetDefault("device_name", "Linux")
