@@ -1,15 +1,15 @@
 package discovery
 
 import (
+	"bytes"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
 	"time"
-	"io"
-	"bytes"
 
 	"github.com/BienBoy/srun/internal/config"
 )
@@ -69,7 +69,7 @@ func CheckCaptivePortal(client *http.Client, probeURL string) (*CaptivePortalRes
 		}, nil
 	}
 
-    // 非重定向：从响应体提取跳转目标
+	// 非重定向：从响应体提取跳转目标
 	// 读一小段即可，避免大 body
 	const maxRead = 64 << 10 // 64KB
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxRead))
@@ -81,14 +81,14 @@ func CheckCaptivePortal(client *http.Client, probeURL string) (*CaptivePortalRes
 	extractedURL, _ := extractRedirectURLFromBody(body)
 	if extractedURL != "" {
 		return &CaptivePortalResult{
-            ProbeURL:   probeURL,
-            StatusCode: statusCode,
-            Redirected: true,
-            Location:   extractedURL,
-            FinalURL:   resp.Request.URL.String(),
-            IsCaptive:  true,
-            Reason:     fmt.Sprintf("重定向 %d -> %s", statusCode, location),
-	}, nil
+			ProbeURL:   probeURL,
+			StatusCode: statusCode,
+			Redirected: true,
+			Location:   extractedURL,
+			FinalURL:   resp.Request.URL.String(),
+			IsCaptive:  true,
+			Reason:     fmt.Sprintf("重定向 %d -> %s", statusCode, location),
+		}, nil
 	}
 
 	return &CaptivePortalResult{
@@ -151,6 +151,7 @@ func DiscoverParams(client *http.Client, baseURL, probeURL string) (*config.Disc
 	var err error
 	var entryURL string
 	var skipCaptiveCheck bool = false
+	params := &config.DiscoveredParams{}
 
 	if baseURL != "" {
 		skipCaptiveCheck = true
@@ -171,22 +172,23 @@ func DiscoverParams(client *http.Client, baseURL, probeURL string) (*config.Disc
 			return nil, nil, fmt.Errorf("captive portal探测失败: %w", err)
 		}
 
-        if !cap.IsCaptive {
-            return nil, cap, fmt.Errorf("未检测到 captive portal")
-        }
+		if !cap.IsCaptive {
+			return nil, cap, fmt.Errorf("未检测到 captive portal")
+		}
 
-        // 从重定向 URL 中提取 base_url
-        if cap.Location != "" {
-            baseURL, err = ExtractBaseURL(cap.Location)
-        } else if cap.FinalURL != "" {
-            baseURL, err = ExtractBaseURL(cap.FinalURL)
-        }
+		// 从重定向 URL 中提取 base_url
+		if cap.Location != "" {
+			baseURL, err = ExtractBaseURL(cap.Location)
+		} else if cap.FinalURL != "" {
+			baseURL, err = ExtractBaseURL(cap.FinalURL)
+		}
 
-        if err != nil || baseURL == "" {
-            return nil, cap, fmt.Errorf("无法从重定向 URL 中提取 base_url")
-        }
+		if err != nil || baseURL == "" {
+			return nil, cap, fmt.Errorf("无法从重定向 URL 中提取 base_url")
+		}
 
-        entryURL = strings.TrimRight(baseURL, "/") + "/"
+		entryURL = strings.TrimRight(baseURL, "/") + "/"
+		mergeDiscoveredParams(params, parseParamsFromURL(cap.Location))
 	}
 
 	// 访问登录页面获取最终URL（可能会重定向）
@@ -195,8 +197,7 @@ func DiscoverParams(client *http.Client, baseURL, probeURL string) (*config.Disc
 		return nil, cap, fmt.Errorf("访问登录页面失败: %w", err)
 	}
 
-	// 从URL查询字符串中解析ac_id
-	params := parseParamsFromURL(finalURL)
+	mergeDiscoveredParams(params, parseParamsFromURL(finalURL))
 
 	if !skipCaptiveCheck {
 		params.BaseURL = &baseURL
@@ -216,20 +217,99 @@ func getFinalURL(client *http.Client, url string) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	// 返回最终的URL（可能经过重定向）
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	if redirectURL, _ := extractRedirectURLFromBody(body); redirectURL != "" {
+		if resolved, err := resolveURL(resp.Request.URL.String(), redirectURL); err == nil {
+			return resolved, nil
+		}
+		return redirectURL, nil
+	}
+
 	return resp.Request.URL.String(), nil
 }
 
 // parseParamsFromURL 从URL查询字符串中解析ac_id
 func parseParamsFromURL(urlStr string) *config.DiscoveredParams {
 	params := &config.DiscoveredParams{}
-
-	// 从URL查询字符串中提取ac_id
-	if val := detectAcIDFromURL(urlStr); val != "" {
-		params.AcID = &val
+	if urlStr == "" {
+		return params
 	}
 
+	u, err := url.Parse(urlStr)
+	if err != nil {
+		return params
+	}
+
+	q := u.Query()
+
+	fillStringPtr(&params.AcID, firstNonEmpty(q.Get("ac_id"), q.Get("acid"), detectAcIDFromURL(urlStr)))
+	fillStringPtr(&params.NasIP, q.Get("nas_ip"))
+	fillStringPtr(&params.ApID, q.Get("ap_id"))
+	fillStringPtr(&params.ApIP, q.Get("ap_ip"))
+	fillStringPtr(&params.MAC, q.Get("mac"))
+	fillStringPtr(&params.Theme, q.Get("theme"))
+
 	return params
+}
+
+func mergeDiscoveredParams(dst, src *config.DiscoveredParams) {
+	if dst == nil || src == nil {
+		return
+	}
+
+	if dst.BaseURL == nil && src.BaseURL != nil {
+		dst.BaseURL = src.BaseURL
+	}
+	if dst.AcID == nil && src.AcID != nil {
+		dst.AcID = src.AcID
+	}
+	if dst.NasIP == nil && src.NasIP != nil {
+		dst.NasIP = src.NasIP
+	}
+	if dst.ApID == nil && src.ApID != nil {
+		dst.ApID = src.ApID
+	}
+	if dst.ApIP == nil && src.ApIP != nil {
+		dst.ApIP = src.ApIP
+	}
+	if dst.MAC == nil && src.MAC != nil {
+		dst.MAC = src.MAC
+	}
+	if dst.Theme == nil && src.Theme != nil {
+		dst.Theme = src.Theme
+	}
+}
+
+func fillStringPtr(dst **string, val string) {
+	if dst == nil || val == "" {
+		return
+	}
+
+	v := val
+	*dst = &v
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, val := range vals {
+		if val != "" {
+			return val
+		}
+	}
+	return ""
+}
+
+func resolveURL(baseURL, target string) (string, error) {
+	base, err := url.Parse(baseURL)
+	if err != nil {
+		return "", err
+	}
+
+	ref, err := url.Parse(target)
+	if err != nil {
+		return "", err
+	}
+
+	return base.ResolveReference(ref).String(), nil
 }
 
 // detectAcIDFromURL 从URL查询字符串中检测ac_id

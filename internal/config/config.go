@@ -17,6 +17,11 @@ type Config struct {
 	BaseURL  string `mapstructure:"base_url"`
 	Username string `mapstructure:"username"`
 	Password string `mapstructure:"password"`
+	NasIP    string `mapstructure:"nas_ip"`
+	ApID     string `mapstructure:"ap_id"`
+	ApIP     string `mapstructure:"ap_ip"`
+	MAC      string `mapstructure:"mac"`
+	Theme    string `mapstructure:"theme"`
 
 	// SRun协议参数
 	AcID           *string `mapstructure:"ac_id"`           // 需要探测或配置
@@ -79,9 +84,14 @@ func Load(configPath string) (*Config, error) {
 
 // setDefaults 设置默认值
 func setDefaults(v *viper.Viper) {
-	v.SetDefault("base_url","")
-	v.SetDefault("username","")
-	v.SetDefault("password","")
+	v.SetDefault("base_url", "")
+	v.SetDefault("username", "")
+	v.SetDefault("password", "")
+	v.SetDefault("nas_ip", "")
+	v.SetDefault("ap_id", "")
+	v.SetDefault("ap_ip", "")
+	v.SetDefault("mac", "")
+	v.SetDefault("theme", "")
 
 	// 运行参数
 	v.SetDefault("os_name", "Linux")
@@ -150,6 +160,26 @@ func (c *Config) ApplyDiscovery(params *DiscoveredParams) {
 	if params.AcID != nil {
 		c.AcID = params.AcID
 	}
+
+	if params.NasIP != nil {
+		c.NasIP = *params.NasIP
+	}
+
+	if params.ApID != nil {
+		c.ApID = *params.ApID
+	}
+
+	if params.ApIP != nil {
+		c.ApIP = *params.ApIP
+	}
+
+	if params.MAC != nil {
+		c.MAC = *params.MAC
+	}
+
+	if params.Theme != nil {
+		c.Theme = *params.Theme
+	}
 }
 
 // GetAcID 获取ac_id（必须已设置）
@@ -192,6 +222,11 @@ func (c *Config) GetBase64Alphabet() *string {
 type DiscoveredParams struct {
 	BaseURL *string // 探测到的 base_url
 	AcID    *string // 探测到的 ac_id
+	NasIP   *string // 探测到的 nas_ip
+	ApID    *string // 探测到的 ap_id
+	ApIP    *string // 探测到的 ap_ip
+	MAC     *string // 探测到的 mac
+	Theme   *string // 探测到的 theme
 }
 
 // promptInput 提示用户输入（明文）

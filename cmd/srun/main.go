@@ -13,10 +13,10 @@ import (
 )
 
 var (
-	configPath    string
-	noDiscovery   bool
-	jsonOutput    bool
-	insecure      bool
+	configPath  string
+	noDiscovery bool
+	jsonOutput  bool
+	insecure    bool
 )
 
 func main() {
@@ -84,6 +84,10 @@ func statusCmd() *cobra.Command {
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "错误: %v\n", err)
 				os.Exit(1)
+			}
+
+			if insecure {
+				cfg.VerifyTLS = false
 			}
 
 			client := protocol.NewClient(cfg.BaseURL, cfg.TimeoutSec, cfg.VerifyTLS)
@@ -162,12 +166,19 @@ func loadConfig(requirePassword bool) (*config.Config, error) {
 		return nil, err
 	}
 
+	if insecure {
+		cfg.VerifyTLS = false
+	}
+
+	if noDiscovery {
+		cfg.AutoDiscover = false
+	}
+
 	if err := cfg.Validate(requirePassword); err != nil {
 		return nil, err
 	}
 
-	// 如果需要探测 base_url 或 ac_id
-	if cfg.AutoDiscover && !noDiscovery {
+	if cfg.AutoDiscover {
 		needsBaseURL := cfg.NeedsBaseURLDiscovery()
 		needsAcID := cfg.NeedsDiscovery()
 
@@ -175,16 +186,13 @@ func loadConfig(requirePassword bool) (*config.Config, error) {
 			fmt.Println("正在探测参数...")
 			client := discovery.NewHTTPClient(cfg.TimeoutSec, cfg.VerifyTLS)
 
-			// 调用探测函数
 			params, cap, err := discovery.DiscoverParams(client, cfg.BaseURL, cfg.ProbeURL)
 			if err != nil {
 				return nil, fmt.Errorf("自动探测失败: %w", err)
 			}
 
-			// 应用探测结果
 			cfg.ApplyDiscovery(params)
 
-			// 输出探测结果
 			if !jsonOutput {
 				if needsBaseURL && params.BaseURL != nil {
 					fmt.Printf("✓ 探测到服务器: %s\n", *params.BaseURL)
@@ -192,7 +200,7 @@ func loadConfig(requirePassword bool) (*config.Config, error) {
 				if needsAcID && params.AcID != nil {
 					fmt.Printf("✓ 探测到 ac_id: %s\n", *params.AcID)
 				}
-				if !needsBaseURL && cap != nil {
+				if !needsBaseURL && !needsAcID && cap != nil {
 					fmt.Printf("✓ 探测完成 (%s)\n", cap.Reason)
 				}
 			}
@@ -259,7 +267,11 @@ func printUserInfo(info map[string]interface{}) {
 	}
 
 	// 余额
-	if wallet, ok := info["wallet"].(float64); ok {
-		fmt.Printf("  账户余额: %.2f 元\n", wallet)
+	if balance, ok := info["wallet"].(float64); ok {
+		fmt.Printf("  账户余额: %.2f 元\n", balance)
+	} else if balance, ok := info["user_balance"].(float64); ok {
+		fmt.Printf("  账户余额: %.2f 元\n", balance)
+	} else if balance, ok := info["wallet_balance"].(float64); ok {
+		fmt.Printf("  账户余额: %.2f 元\n", balance)
 	}
 }

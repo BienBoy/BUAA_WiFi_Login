@@ -2,6 +2,8 @@
 
 北航校园网自动登录工具，代码由 Claude Code 实现。
 
+参数探测逻辑说明见 `docs/parameter-discovery.md`。
+
 ## 功能
 
 - 自动登录校园网
@@ -66,8 +68,14 @@ go build -o srun cmd/srun/main.go
 ```json
 {
   "base_url": "https://gw.buaa.edu.cn",
+  "ac_id": "78",
   "username": "your_username",
-  "password": "your_password"
+  "password": "your_password",
+  "nas_ip": "",
+  "ap_id": "",
+  "ap_ip": "",
+  "mac": "",
+  "theme": "buaa"
 }
 ```
 
@@ -103,11 +111,19 @@ export SRUN_BASE_URL=https://gw.buaa.edu.cn
 |------|------|--------|
 | `base_url` | 认证服务器地址 | 自动探测（必须离线状态） |
 | `ac_id` | 接入点 ID | 自动探测 |
+| `nas_ip` | 网关下发的 NAS IP | 自动探测 |
+| `ap_id` | 网关下发的 AP ID | 自动探测 |
+| `ap_ip` | 网关下发的 AP IP | 自动探测 |
+| `mac` | 网关下发的客户端 MAC | 自动探测 |
 | `n` | 认证参数 n | `200` |
 | `type` | 认证类型 | `1` |
 | `double_stack` | 双栈参数 | `0` |
 | `enc_ver` | 加密版本 | `srun_bx1` |
 | `base64_alphabet` | Base64 字母表 | 默认字母表 |
+
+说明
+
+`ac_id`、`nas_ip`、`ap_id`、`ap_ip`、`mac`、`theme` 都属于入口参数。通常不需要手动填写，脚本会在缺少关键参数时自动探测，并在登录或登出失败且疑似参数失效时重新探测。若已手动配置，脚本会优先使用配置值。
 
 ### 运行参数
 

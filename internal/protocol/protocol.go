@@ -15,6 +15,7 @@ import (
 
 	"github.com/BienBoy/srun/internal/config"
 	"github.com/BienBoy/srun/internal/crypto"
+	"github.com/BienBoy/srun/internal/discovery"
 )
 
 // Client SRun客户端
@@ -102,6 +103,19 @@ func (c *Client) GetChallenge(username string) (*Challenge, error) {
 
 // Login 登录
 func (c *Client) Login(cfg *config.Config) (map[string]interface{}, error) {
+	result, err := c.loginOnce(cfg)
+	if err == nil || !cfg.AutoDiscover || !shouldRetryWithRediscovery(err) {
+		return result, err
+	}
+
+	if err := c.rediscover(cfg); err != nil {
+		return nil, err
+	}
+
+	return c.loginOnce(cfg)
+}
+
+func (c *Client) loginOnce(cfg *config.Config) (map[string]interface{}, error) {
 	// 获取必需参数
 	acID, err := cfg.GetAcID()
 	if err != nil {
@@ -176,7 +190,11 @@ func (c *Client) Login(cfg *config.Config) (map[string]interface{}, error) {
 	params.Set("type", typ)
 	params.Set("os", cfg.OSName)
 	params.Set("name", cfg.DeviceName)
+	params.Set("nas_ip", cfg.NasIP)
 	params.Set("double_stack", cfg.GetDoubleStack())
+	params.Set("ap_id", cfg.ApID)
+	params.Set("ap_ip", cfg.ApIP)
+	params.Set("mac", cfg.MAC)
 	params.Set("_", fmt.Sprintf("%d", time.Now().UnixMilli()))
 
 	apiURL := fmt.Sprintf("%s/cgi-bin/srun_portal?%s", c.BaseURL, params.Encode())
@@ -222,19 +240,37 @@ func (c *Client) Login(cfg *config.Config) (map[string]interface{}, error) {
 
 // Logout 登出
 func (c *Client) Logout(cfg *config.Config) (map[string]interface{}, error) {
+	result, err := c.logoutOnce(cfg)
+	if err == nil || !cfg.AutoDiscover || !shouldRetryWithRediscovery(err) {
+		return result, err
+	}
+
+	if err := c.rediscover(cfg); err != nil {
+		return nil, err
+	}
+
+	return c.logoutOnce(cfg)
+}
+
+func (c *Client) logoutOnce(cfg *config.Config) (map[string]interface{}, error) {
 	// 获取必需参数
 	acID, err := cfg.GetAcID()
 	if err != nil {
 		return nil, err
 	}
 
+	info, err := c.RadUserInfo()
+	if err != nil {
+		return nil, fmt.Errorf("获取在线信息失败: %w", err)
+	}
+
 	// 提交登出请求
 	params := url.Values{}
 	params.Set("callback", fmt.Sprintf("jQuery1124044069126839574846_%d", time.Now().UnixMilli()))
 	params.Set("action", "logout")
-	params.Set("username", cfg.Username)
+	params.Set("username", extractOnlineUsername(info, cfg.Username))
 	params.Set("ac_id", acID)
-	params.Set("ip", "")
+	params.Set("ip", extractOnlineIP(info))
 	params.Set("_", fmt.Sprintf("%d", time.Now().UnixMilli()))
 
 	apiURL := fmt.Sprintf("%s/cgi-bin/srun_portal?%s", c.BaseURL, params.Encode())
@@ -341,5 +377,74 @@ func IsOnline(info map[string]interface{}) bool {
 			return v
 		}
 	}
+	return false
+}
+
+func extractOnlineIP(info map[string]interface{}) string {
+	for _, key := range []string{"online_ip", "client_ip", "user_ip"} {
+		if ip, ok := info[key].(string); ok && ip != "" {
+			return ip
+		}
+	}
+	return ""
+}
+
+func extractOnlineUsername(info map[string]interface{}, fallback string) string {
+	for _, key := range []string{"user_name", "username"} {
+		if username, ok := info[key].(string); ok && username != "" {
+			return username
+		}
+	}
+	return fallback
+}
+
+func (c *Client) rediscover(cfg *config.Config) error {
+	client := discovery.NewHTTPClient(cfg.TimeoutSec, cfg.VerifyTLS)
+	params, _, err := discovery.DiscoverParams(client, cfg.BaseURL, cfg.ProbeURL)
+	if err != nil {
+		return fmt.Errorf("重新探测参数失败: %w", err)
+	}
+
+	cfg.ApplyDiscovery(params)
+	c.BaseURL = cfg.BaseURL
+	return nil
+}
+
+func shouldRetryWithRediscovery(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	if isCredentialError(err) {
+		return false
+	}
+
+	return true
+}
+
+func isCredentialError(err error) bool {
+	text := strings.ToLower(err.Error())
+
+	patterns := []string{
+		"password",
+		"username",
+		"user not",
+		"account",
+		"认证失败",
+		"密码",
+		"账号",
+		"用户不存在",
+		"用户名不存在",
+		"密码错误",
+		"account_locked",
+		"user_must_modify_password",
+	}
+
+	for _, pattern := range patterns {
+		if strings.Contains(text, pattern) {
+			return true
+		}
+	}
+
 	return false
 }
